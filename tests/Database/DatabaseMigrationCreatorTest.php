@@ -1,60 +1,105 @@
 <?php
 
-use Mockery as m;
+namespace Illuminate\Tests\Database;
+
 use Illuminate\Database\Migrations\MigrationCreator;
+use Illuminate\Filesystem\Filesystem;
+use InvalidArgumentException;
+use Mockery as m;
+use PHPUnit\Framework\TestCase;
 
-class DatabaseMigrationCreatorTest extends PHPUnit_Framework_TestCase {
+class DatabaseMigrationCreatorTest extends TestCase
+{
+    protected function tearDown(): void
+    {
+        m::close();
+    }
 
-	public function tearDown()
-	{
-		m::close();
-	}
+    public function testBasicCreateMethodStoresMigrationFile()
+    {
+        $creator = $this->getCreator();
 
+        $creator->expects($this->any())->method('getDatePrefix')->willReturn('foo');
+        $creator->getFilesystem()->shouldReceive('exists')->once()->with('stubs/migration.stub')->andReturn(false);
+        $creator->getFilesystem()->shouldReceive('get')->once()->with($creator->stubPath().'/migration.stub')->andReturn('DummyClass');
+        $creator->getFilesystem()->shouldReceive('put')->once()->with('foo/foo_create_bar.php', 'CreateBar');
+        $creator->getFilesystem()->shouldReceive('glob')->once()->with('foo/*.php')->andReturn(['foo/foo_create_bar.php']);
+        $creator->getFilesystem()->shouldReceive('requireOnce')->once()->with('foo/foo_create_bar.php');
 
-	public function testBasicCreateMethodStoresMigrationFile()
-	{
-		$creator = $this->getCreator();
-		unset($_SERVER['__migration.creator']);
-		$creator->afterCreate(function() { $_SERVER['__migration.creator'] = true; });
-		$creator->expects($this->any())->method('getDatePrefix')->will($this->returnValue('foo'));
-		$creator->getFilesystem()->shouldReceive('get')->once()->with($creator->getStubPath().'/blank.stub')->andReturn('{{class}}');
-		$creator->getFilesystem()->shouldReceive('put')->once()->with('foo/foo_create_bar.php', 'CreateBar');
+        $creator->create('create_bar', 'foo');
+    }
 
-		$creator->create('create_bar', 'foo');
+    public function testBasicCreateMethodCallsPostCreateHooks()
+    {
+        $table = 'baz';
 
-		$this->assertTrue($_SERVER['__migration.creator']);
+        $creator = $this->getCreator();
+        unset($_SERVER['__migration.creator']);
+        $creator->afterCreate(function ($table) {
+            $_SERVER['__migration.creator'] = $table;
+        });
 
-		unset($_SERVER['__migration.creator']);
-	}
+        $creator->expects($this->any())->method('getDatePrefix')->willReturn('foo');
+        $creator->getFilesystem()->shouldReceive('exists')->once()->with('stubs/migration.update.stub')->andReturn(false);
+        $creator->getFilesystem()->shouldReceive('get')->once()->with($creator->stubPath().'/migration.update.stub')->andReturn('DummyClass DummyTable');
+        $creator->getFilesystem()->shouldReceive('put')->once()->with('foo/foo_create_bar.php', 'CreateBar baz');
+        $creator->getFilesystem()->shouldReceive('glob')->once()->with('foo/*.php')->andReturn(['foo/foo_create_bar.php']);
+        $creator->getFilesystem()->shouldReceive('requireOnce')->once()->with('foo/foo_create_bar.php');
 
+        $creator->create('create_bar', 'foo', $table);
 
-	public function testTableUpdateMigrationStoresMigrationFile()
-	{
-		$creator = $this->getCreator();
-		$creator->expects($this->any())->method('getDatePrefix')->will($this->returnValue('foo'));
-		$creator->getFilesystem()->shouldReceive('get')->once()->with($creator->getStubPath().'/update.stub')->andReturn('{{class}} {{table}}');
-		$creator->getFilesystem()->shouldReceive('put')->once()->with('foo/foo_create_bar.php', 'CreateBar baz');
+        $this->assertEquals($_SERVER['__migration.creator'], $table);
 
-		$creator->create('create_bar', 'foo', 'baz');
-	}
+        unset($_SERVER['__migration.creator']);
+    }
 
+    public function testTableUpdateMigrationStoresMigrationFile()
+    {
+        $creator = $this->getCreator();
+        $creator->expects($this->any())->method('getDatePrefix')->willReturn('foo');
+        $creator->getFilesystem()->shouldReceive('exists')->once()->with('stubs/migration.update.stub')->andReturn(false);
+        $creator->getFilesystem()->shouldReceive('get')->once()->with($creator->stubPath().'/migration.update.stub')->andReturn('DummyClass DummyTable');
+        $creator->getFilesystem()->shouldReceive('put')->once()->with('foo/foo_create_bar.php', 'CreateBar baz');
+        $creator->getFilesystem()->shouldReceive('glob')->once()->with('foo/*.php')->andReturn(['foo/foo_create_bar.php']);
+        $creator->getFilesystem()->shouldReceive('requireOnce')->once()->with('foo/foo_create_bar.php');
 
-	public function testTableCreationMigrationStoresMigrationFile()
-	{
-		$creator = $this->getCreator();
-		$creator->expects($this->any())->method('getDatePrefix')->will($this->returnValue('foo'));
-		$creator->getFilesystem()->shouldReceive('get')->once()->with($creator->getStubPath().'/create.stub')->andReturn('{{class}} {{table}}');
-		$creator->getFilesystem()->shouldReceive('put')->once()->with('foo/foo_create_bar.php', 'CreateBar baz');
+        $creator->create('create_bar', 'foo', 'baz');
+    }
 
-		$creator->create('create_bar', 'foo', 'baz', true);
-	}
+    public function testTableCreationMigrationStoresMigrationFile()
+    {
+        $creator = $this->getCreator();
+        $creator->expects($this->any())->method('getDatePrefix')->willReturn('foo');
+        $creator->getFilesystem()->shouldReceive('exists')->once()->with('stubs/migration.create.stub')->andReturn(false);
+        $creator->getFilesystem()->shouldReceive('get')->once()->with($creator->stubPath().'/migration.create.stub')->andReturn('DummyClass DummyTable');
+        $creator->getFilesystem()->shouldReceive('put')->once()->with('foo/foo_create_bar.php', 'CreateBar baz');
+        $creator->getFilesystem()->shouldReceive('glob')->once()->with('foo/*.php')->andReturn(['foo/foo_create_bar.php']);
+        $creator->getFilesystem()->shouldReceive('requireOnce')->once()->with('foo/foo_create_bar.php');
 
+        $creator->create('create_bar', 'foo', 'baz', true);
+    }
 
-	protected function getCreator()
-	{
-		$files = m::mock('Illuminate\Filesystem\Filesystem');
+    public function testTableUpdateMigrationWontCreateDuplicateClass()
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('A MigrationCreatorFakeMigration class already exists.');
 
-		return $this->getMock('Illuminate\Database\Migrations\MigrationCreator', array('getDatePrefix'), array($files));
-	}
+        $creator = $this->getCreator();
 
+        $creator->getFilesystem()->shouldReceive('glob')->once()->with('foo/*.php')->andReturn(['foo/foo_create_bar.php']);
+        $creator->getFilesystem()->shouldReceive('requireOnce')->once()->with('foo/foo_create_bar.php');
+
+        $creator->create('migration_creator_fake_migration', 'foo');
+    }
+
+    protected function getCreator()
+    {
+        $files = m::mock(Filesystem::class);
+        $customStubs = 'stubs';
+
+        return $this->getMockBuilder(MigrationCreator::class)
+            ->setMethods(['getDatePrefix'])
+            ->setConstructorArgs([$files, $customStubs])
+            ->getMock();
+    }
 }

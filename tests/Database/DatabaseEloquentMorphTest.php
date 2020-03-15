@@ -1,144 +1,311 @@
 <?php
 
-use Mockery as m;
-use Illuminate\Database\Eloquent\Relations\MorphOne;
+namespace Illuminate\Tests\Database;
+
+use Foo\Bar\EloquentModelNamespacedStub;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Database\Eloquent\Relations\MorphOne;
+use Illuminate\Database\Eloquent\Relations\Relation;
+use Mockery as m;
+use PHPUnit\Framework\TestCase;
 
-class DatabaseEloquentMorphTest extends PHPUnit_Framework_TestCase {
+class DatabaseEloquentMorphTest extends TestCase
+{
+    protected function tearDown(): void
+    {
+        Relation::morphMap([], false);
 
-	public function tearDown()
-	{
-		m::close();
-	}
+        m::close();
+    }
 
+    public function testMorphOneSetsProperConstraints()
+    {
+        $this->getOneRelation();
+    }
 
-	public function testMorphOneSetsProperConstraints()
-	{
-		$relation = $this->getOneRelation();
-	}
+    public function testMorphOneEagerConstraintsAreProperlyAdded()
+    {
+        $relation = $this->getOneRelation();
+        $relation->getParent()->shouldReceive('getKeyName')->once()->andReturn('id');
+        $relation->getParent()->shouldReceive('getKeyType')->once()->andReturn('string');
+        $relation->getQuery()->shouldReceive('whereIn')->once()->with('table.morph_id', [1, 2]);
+        $relation->getQuery()->shouldReceive('where')->once()->with('table.morph_type', get_class($relation->getParent()));
 
+        $model1 = new EloquentMorphResetModelStub;
+        $model1->id = 1;
+        $model2 = new EloquentMorphResetModelStub;
+        $model2->id = 2;
+        $relation->addEagerConstraints([$model1, $model2]);
+    }
 
-	public function testMorphOneEagerConstraintsAreProperlyAdded()
-	{
-		$relation = $this->getOneRelation();
-		$relation->getQuery()->shouldReceive('whereIn')->once()->with('table.morph_id', array(1, 2));
-		$relation->getQuery()->shouldReceive('where')->once()->with('table.morph_type', get_class($relation->getParent()));
+    /**
+     * Note that the tests are the exact same for morph many because the classes share this code...
+     * Will still test to be safe.
+     */
+    public function testMorphManySetsProperConstraints()
+    {
+        $this->getManyRelation();
+    }
 
-		$model1 = new EloquentMorphResetModelStub;
-		$model1->id = 1;
-		$model2 = new EloquentMorphResetModelStub;
-		$model2->id = 2;
-		$relation->addEagerConstraints(array($model1, $model2));
-	}
+    public function testMorphManyEagerConstraintsAreProperlyAdded()
+    {
+        $relation = $this->getManyRelation();
+        $relation->getParent()->shouldReceive('getKeyName')->once()->andReturn('id');
+        $relation->getParent()->shouldReceive('getKeyType')->once()->andReturn('int');
+        $relation->getQuery()->shouldReceive('whereIntegerInRaw')->once()->with('table.morph_id', [1, 2]);
+        $relation->getQuery()->shouldReceive('where')->once()->with('table.morph_type', get_class($relation->getParent()));
 
+        $model1 = new EloquentMorphResetModelStub;
+        $model1->id = 1;
+        $model2 = new EloquentMorphResetModelStub;
+        $model2->id = 2;
+        $relation->addEagerConstraints([$model1, $model2]);
+    }
 
-	public function testMorphOneWhereClausesCanBeRemoved()
-	{
-		$builder = new EloquentMorphResetBuilderStub;
-		$parent = m::mock('Illuminate\Database\Eloquent\Model');
-		$parent->shouldReceive('getKey')->andReturn(1);
-		$parent->shouldReceive('isSoftDeleting')->andReturn(false);
-		$relation = new MorphOne($builder, $parent, 'morph_type', 'morph_id');
-		$relation->where('foo', '=', 'bar');
-		list($wheres, $bindings) = $relation->getAndResetWheres();
+    public function testMakeFunctionOnMorph()
+    {
+        $_SERVER['__eloquent.saved'] = false;
+        // Doesn't matter which relation type we use since they share the code...
+        $relation = $this->getOneRelation();
+        $instance = m::mock(Model::class);
+        $instance->shouldReceive('setAttribute')->once()->with('morph_id', 1);
+        $instance->shouldReceive('setAttribute')->once()->with('morph_type', get_class($relation->getParent()));
+        $instance->shouldReceive('save')->never();
+        $relation->getRelated()->shouldReceive('newInstance')->once()->with(['name' => 'taylor'])->andReturn($instance);
 
-		$this->assertEquals('bar', $bindings[0]);
-		$this->assertEquals('Basic', $wheres[0]['type']);
-		$this->assertEquals('foo', $wheres[0]['column']);
-		$this->assertEquals('bar', $wheres[0]['value']);
-	}
+        $this->assertEquals($instance, $relation->make(['name' => 'taylor']));
+    }
 
+    public function testCreateFunctionOnMorph()
+    {
+        // Doesn't matter which relation type we use since they share the code...
+        $relation = $this->getOneRelation();
+        $created = m::mock(Model::class);
+        $created->shouldReceive('setAttribute')->once()->with('morph_id', 1);
+        $created->shouldReceive('setAttribute')->once()->with('morph_type', get_class($relation->getParent()));
+        $relation->getRelated()->shouldReceive('newInstance')->once()->with(['name' => 'taylor'])->andReturn($created);
+        $created->shouldReceive('save')->once()->andReturn(true);
 
-	/**
-	 * Note that the tests are the exact same for morph many because the classes share this code...
-	 * Will still test to be safe.
-	 */
-	public function testMorphManySetsProperConstraints()
-	{
-		$relation = $this->getManyRelation();
-	}
+        $this->assertEquals($created, $relation->create(['name' => 'taylor']));
+    }
 
+    public function testFindOrNewMethodFindsModel()
+    {
+        $relation = $this->getOneRelation();
+        $relation->getQuery()->shouldReceive('find')->once()->with('foo', ['*'])->andReturn($model = m::mock(Model::class));
+        $relation->getRelated()->shouldReceive('newInstance')->never();
+        $model->shouldReceive('setAttribute')->never();
+        $model->shouldReceive('save')->never();
 
-	public function testMorphManyEagerConstraintsAreProperlyAdded()
-	{
-		$relation = $this->getManyRelation();
-		$relation->getQuery()->shouldReceive('whereIn')->once()->with('table.morph_id', array(1, 2));
-		$relation->getQuery()->shouldReceive('where')->once()->with('table.morph_type', get_class($relation->getParent()));
+        $this->assertInstanceOf(Model::class, $relation->findOrNew('foo'));
+    }
 
-		$model1 = new EloquentMorphResetModelStub;
-		$model1->id = 1;
-		$model2 = new EloquentMorphResetModelStub;
-		$model2->id = 2;
-		$relation->addEagerConstraints(array($model1, $model2));
-	}
+    public function testFindOrNewMethodReturnsNewModelWithMorphKeysSet()
+    {
+        $relation = $this->getOneRelation();
+        $relation->getQuery()->shouldReceive('find')->once()->with('foo', ['*'])->andReturn(null);
+        $relation->getRelated()->shouldReceive('newInstance')->once()->with()->andReturn($model = m::mock(Model::class));
+        $model->shouldReceive('setAttribute')->once()->with('morph_id', 1);
+        $model->shouldReceive('setAttribute')->once()->with('morph_type', get_class($relation->getParent()));
+        $model->shouldReceive('save')->never();
 
+        $this->assertInstanceOf(Model::class, $relation->findOrNew('foo'));
+    }
 
-	public function testMorphManyWhereClausesCanBeRemoved()
-	{
-		$builder = new EloquentMorphResetBuilderStub;
-		$parent = m::mock('Illuminate\Database\Eloquent\Model');
-		$parent->shouldReceive('getKey')->andReturn(1);
-		$relation = new MorphMany($builder, $parent, 'morph_type', 'morph_id');
-		$relation->where('foo', '=', 'bar');
-		list($wheres, $bindings) = $relation->getAndResetWheres();
+    public function testFirstOrNewMethodFindsFirstModel()
+    {
+        $relation = $this->getOneRelation();
+        $relation->getQuery()->shouldReceive('where')->once()->with(['foo'])->andReturn($relation->getQuery());
+        $relation->getQuery()->shouldReceive('first')->once()->with()->andReturn($model = m::mock(Model::class));
+        $relation->getRelated()->shouldReceive('newInstance')->never();
+        $model->shouldReceive('setAttribute')->never();
+        $model->shouldReceive('save')->never();
 
-		$this->assertEquals('bar', $bindings[0]);
-		$this->assertEquals('Basic', $wheres[0]['type']);
-		$this->assertEquals('foo', $wheres[0]['column']);
-		$this->assertEquals('bar', $wheres[0]['value']);
-	}
+        $this->assertInstanceOf(Model::class, $relation->firstOrNew(['foo']));
+    }
 
+    public function testFirstOrNewMethodWithValueFindsFirstModel()
+    {
+        $relation = $this->getOneRelation();
+        $relation->getQuery()->shouldReceive('where')->once()->with(['foo' => 'bar'])->andReturn($relation->getQuery());
+        $relation->getQuery()->shouldReceive('first')->once()->with()->andReturn($model = m::mock(Model::class));
+        $relation->getRelated()->shouldReceive('newInstance')->never();
+        $model->shouldReceive('setAttribute')->never();
+        $model->shouldReceive('save')->never();
 
-	public function testCreateFunctionOnMorph()
-	{
-		// Doesn't matter which relation type we use since they share the code...
-		$relation = $this->getOneRelation();
-		$created = m::mock('stdClass');
-		$relation->getRelated()->shouldReceive('newInstance')->once()->with(array('name' => 'taylor', 'morph_id' => 1, 'morph_type' => get_class($relation->getParent())))->andReturn($created);
-		$created->shouldReceive('save')->once()->andReturn(true);
+        $this->assertInstanceOf(Model::class, $relation->firstOrNew(['foo' => 'bar'], ['baz' => 'qux']));
+    }
 
-		$this->assertEquals($created, $relation->create(array('name' => 'taylor')));
-	}
+    public function testFirstOrNewMethodReturnsNewModelWithMorphKeysSet()
+    {
+        $relation = $this->getOneRelation();
+        $relation->getQuery()->shouldReceive('where')->once()->with(['foo'])->andReturn($relation->getQuery());
+        $relation->getQuery()->shouldReceive('first')->once()->with()->andReturn(null);
+        $relation->getRelated()->shouldReceive('newInstance')->once()->with(['foo'])->andReturn($model = m::mock(Model::class));
+        $model->shouldReceive('setAttribute')->once()->with('morph_id', 1);
+        $model->shouldReceive('setAttribute')->once()->with('morph_type', get_class($relation->getParent()));
+        $model->shouldReceive('save')->never();
 
+        $this->assertInstanceOf(Model::class, $relation->firstOrNew(['foo']));
+    }
 
-	protected function getOneRelation()
-	{
-		$builder = m::mock('Illuminate\Database\Eloquent\Builder');
-		$builder->shouldReceive('where')->once()->with('table.morph_id', '=', 1);
-		$related = m::mock('Illuminate\Database\Eloquent\Model');
-		$builder->shouldReceive('getModel')->andReturn($related);
-		$parent = m::mock('Illuminate\Database\Eloquent\Model');
-		$parent->shouldReceive('getKey')->andReturn(1);
-		$builder->shouldReceive('where')->once()->with('table.morph_type', get_class($parent));
-		return new MorphOne($builder, $parent, 'table.morph_type', 'table.morph_id');
-	}
+    public function testFirstOrNewMethodWithValuesReturnsNewModelWithMorphKeysSet()
+    {
+        $relation = $this->getOneRelation();
+        $relation->getQuery()->shouldReceive('where')->once()->with(['foo' => 'bar'])->andReturn($relation->getQuery());
+        $relation->getQuery()->shouldReceive('first')->once()->with()->andReturn(null);
+        $relation->getRelated()->shouldReceive('newInstance')->once()->with(['foo' => 'bar', 'baz' => 'qux'])->andReturn($model = m::mock(Model::class));
+        $model->shouldReceive('setAttribute')->once()->with('morph_id', 1);
+        $model->shouldReceive('setAttribute')->once()->with('morph_type', get_class($relation->getParent()));
+        $model->shouldReceive('save')->never();
 
+        $this->assertInstanceOf(Model::class, $relation->firstOrNew(['foo' => 'bar'], ['baz' => 'qux']));
+    }
 
-	protected function getManyRelation()
-	{
-		$builder = m::mock('Illuminate\Database\Eloquent\Builder');
-		$builder->shouldReceive('where')->once()->with('table.morph_id', '=', 1);
-		$related = m::mock('Illuminate\Database\Eloquent\Model');
-		$builder->shouldReceive('getModel')->andReturn($related);
-		$parent = m::mock('Illuminate\Database\Eloquent\Model');
-		$parent->shouldReceive('getKey')->andReturn(1);
-		$builder->shouldReceive('where')->once()->with('table.morph_type', get_class($parent));
-		return new MorphMany($builder, $parent, 'table.morph_type', 'table.morph_id');
-	}
+    public function testFirstOrCreateMethodFindsFirstModel()
+    {
+        $relation = $this->getOneRelation();
+        $relation->getQuery()->shouldReceive('where')->once()->with(['foo'])->andReturn($relation->getQuery());
+        $relation->getQuery()->shouldReceive('first')->once()->with()->andReturn($model = m::mock(Model::class));
+        $relation->getRelated()->shouldReceive('newInstance')->never();
+        $model->shouldReceive('setAttribute')->never();
+        $model->shouldReceive('save')->never();
 
+        $this->assertInstanceOf(Model::class, $relation->firstOrCreate(['foo']));
+    }
+
+    public function testFirstOrCreateMethodWithValuesFindsFirstModel()
+    {
+        $relation = $this->getOneRelation();
+        $relation->getQuery()->shouldReceive('where')->once()->with(['foo' => 'bar'])->andReturn($relation->getQuery());
+        $relation->getQuery()->shouldReceive('first')->once()->with()->andReturn($model = m::mock(Model::class));
+        $relation->getRelated()->shouldReceive('newInstance')->never();
+        $model->shouldReceive('setAttribute')->never();
+        $model->shouldReceive('save')->never();
+
+        $this->assertInstanceOf(Model::class, $relation->firstOrCreate(['foo' => 'bar'], ['baz' => 'qux']));
+    }
+
+    public function testFirstOrCreateMethodCreatesNewMorphModel()
+    {
+        $relation = $this->getOneRelation();
+        $relation->getQuery()->shouldReceive('where')->once()->with(['foo'])->andReturn($relation->getQuery());
+        $relation->getQuery()->shouldReceive('first')->once()->with()->andReturn(null);
+        $relation->getRelated()->shouldReceive('newInstance')->once()->with(['foo'])->andReturn($model = m::mock(Model::class));
+        $model->shouldReceive('setAttribute')->once()->with('morph_id', 1);
+        $model->shouldReceive('setAttribute')->once()->with('morph_type', get_class($relation->getParent()));
+        $model->shouldReceive('save')->once()->andReturn(true);
+
+        $this->assertInstanceOf(Model::class, $relation->firstOrCreate(['foo']));
+    }
+
+    public function testFirstOrCreateMethodWithValuesCreatesNewMorphModel()
+    {
+        $relation = $this->getOneRelation();
+        $relation->getQuery()->shouldReceive('where')->once()->with(['foo' => 'bar'])->andReturn($relation->getQuery());
+        $relation->getQuery()->shouldReceive('first')->once()->with()->andReturn(null);
+        $relation->getRelated()->shouldReceive('newInstance')->once()->with(['foo' => 'bar', 'baz' => 'qux'])->andReturn($model = m::mock(Model::class));
+        $model->shouldReceive('setAttribute')->once()->with('morph_id', 1);
+        $model->shouldReceive('setAttribute')->once()->with('morph_type', get_class($relation->getParent()));
+        $model->shouldReceive('save')->once()->andReturn(true);
+
+        $this->assertInstanceOf(Model::class, $relation->firstOrCreate(['foo' => 'bar'], ['baz' => 'qux']));
+    }
+
+    public function testUpdateOrCreateMethodFindsFirstModelAndUpdates()
+    {
+        $relation = $this->getOneRelation();
+        $relation->getQuery()->shouldReceive('where')->once()->with(['foo'])->andReturn($relation->getQuery());
+        $relation->getQuery()->shouldReceive('first')->once()->with()->andReturn($model = m::mock(Model::class));
+        $relation->getRelated()->shouldReceive('newInstance')->never();
+        $model->shouldReceive('setAttribute')->never();
+        $model->shouldReceive('fill')->once()->with(['bar']);
+        $model->shouldReceive('save')->once();
+
+        $this->assertInstanceOf(Model::class, $relation->updateOrCreate(['foo'], ['bar']));
+    }
+
+    public function testUpdateOrCreateMethodCreatesNewMorphModel()
+    {
+        $relation = $this->getOneRelation();
+        $relation->getQuery()->shouldReceive('where')->once()->with(['foo'])->andReturn($relation->getQuery());
+        $relation->getQuery()->shouldReceive('first')->once()->with()->andReturn(null);
+        $relation->getRelated()->shouldReceive('newInstance')->once()->with(['foo'])->andReturn($model = m::mock(Model::class));
+        $model->shouldReceive('setAttribute')->once()->with('morph_id', 1);
+        $model->shouldReceive('setAttribute')->once()->with('morph_type', get_class($relation->getParent()));
+        $model->shouldReceive('save')->once()->andReturn(true);
+        $model->shouldReceive('fill')->once()->with(['bar']);
+
+        $this->assertInstanceOf(Model::class, $relation->updateOrCreate(['foo'], ['bar']));
+    }
+
+    public function testCreateFunctionOnNamespacedMorph()
+    {
+        $relation = $this->getNamespacedRelation('namespace');
+        $created = m::mock(Model::class);
+        $created->shouldReceive('setAttribute')->once()->with('morph_id', 1);
+        $created->shouldReceive('setAttribute')->once()->with('morph_type', 'namespace');
+        $relation->getRelated()->shouldReceive('newInstance')->once()->with(['name' => 'taylor'])->andReturn($created);
+        $created->shouldReceive('save')->once()->andReturn(true);
+
+        $this->assertEquals($created, $relation->create(['name' => 'taylor']));
+    }
+
+    protected function getOneRelation()
+    {
+        $builder = m::mock(Builder::class);
+        $builder->shouldReceive('whereNotNull')->once()->with('table.morph_id');
+        $builder->shouldReceive('where')->once()->with('table.morph_id', '=', 1);
+        $related = m::mock(Model::class);
+        $builder->shouldReceive('getModel')->andReturn($related);
+        $parent = m::mock(Model::class);
+        $parent->shouldReceive('getAttribute')->with('id')->andReturn(1);
+        $parent->shouldReceive('getMorphClass')->andReturn(get_class($parent));
+        $builder->shouldReceive('where')->once()->with('table.morph_type', get_class($parent));
+
+        return new MorphOne($builder, $parent, 'table.morph_type', 'table.morph_id', 'id');
+    }
+
+    protected function getManyRelation()
+    {
+        $builder = m::mock(Builder::class);
+        $builder->shouldReceive('whereNotNull')->once()->with('table.morph_id');
+        $builder->shouldReceive('where')->once()->with('table.morph_id', '=', 1);
+        $related = m::mock(Model::class);
+        $builder->shouldReceive('getModel')->andReturn($related);
+        $parent = m::mock(Model::class);
+        $parent->shouldReceive('getAttribute')->with('id')->andReturn(1);
+        $parent->shouldReceive('getMorphClass')->andReturn(get_class($parent));
+        $builder->shouldReceive('where')->once()->with('table.morph_type', get_class($parent));
+
+        return new MorphMany($builder, $parent, 'table.morph_type', 'table.morph_id', 'id');
+    }
+
+    protected function getNamespacedRelation($alias)
+    {
+        require_once __DIR__.'/stubs/EloquentModelNamespacedStub.php';
+
+        Relation::morphMap([
+            $alias => EloquentModelNamespacedStub::class,
+        ]);
+
+        $builder = m::mock(Builder::class);
+        $builder->shouldReceive('whereNotNull')->once()->with('table.morph_id');
+        $builder->shouldReceive('where')->once()->with('table.morph_id', '=', 1);
+        $related = m::mock(Model::class);
+        $builder->shouldReceive('getModel')->andReturn($related);
+        $parent = m::mock(EloquentModelNamespacedStub::class);
+        $parent->shouldReceive('getAttribute')->with('id')->andReturn(1);
+        $parent->shouldReceive('getMorphClass')->andReturn($alias);
+        $builder->shouldReceive('where')->once()->with('table.morph_type', $alias);
+
+        return new MorphOne($builder, $parent, 'table.morph_type', 'table.morph_id', 'id');
+    }
 }
 
-
-class EloquentMorphResetModelStub extends Illuminate\Database\Eloquent\Model {}
-
-
-class EloquentMorphResetBuilderStub extends Illuminate\Database\Eloquent\Builder {
-	public function __construct() { $this->query = new EloquentRelationQueryStub; }
-	public function getModel() { return new EloquentMorphResetModelStub; }
-	public function isSoftDeleting() { return false; }
-}
-
-
-class EloquentMorphQueryStub extends Illuminate\Database\Query\Builder {
-	public function __construct() {}
+class EloquentMorphResetModelStub extends Model
+{
+    //
 }

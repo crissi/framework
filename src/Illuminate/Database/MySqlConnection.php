@@ -1,47 +1,66 @@
-<?php namespace Illuminate\Database;
+<?php
 
-class MySqlConnection extends Connection {
+namespace Illuminate\Database;
 
-	/**
-	 * Get a schema builder instance for the connection.
-	 *
-	 * @return \Illuminate\Database\Schema\Builder
-	 */
-	public function getSchemaBuilder()
-	{
-		if (is_null($this->schemaGrammar)) { $this->useDefaultSchemaGrammar(); }
+use Doctrine\DBAL\Driver\PDOMySql\Driver as DoctrineDriver;
+use Illuminate\Database\Query\Grammars\MySqlGrammar as QueryGrammar;
+use Illuminate\Database\Query\Processors\MySqlProcessor;
+use Illuminate\Database\Schema\Grammars\MySqlGrammar as SchemaGrammar;
+use Illuminate\Database\Schema\MySqlBuilder;
 
-		return new Schema\MySqlBuilder($this);
-	}
+class MySqlConnection extends Connection
+{
+    /**
+     * Get the default query grammar instance.
+     *
+     * @return \Illuminate\Database\Query\Grammars\MySqlGrammar
+     */
+    protected function getDefaultQueryGrammar()
+    {
+        return $this->withTablePrefix(new QueryGrammar);
+    }
 
-	/**
-	 * Get the default query grammar instance.
-	 *
-	 * @return \Illuminate\Database\Query\Grammars\Grammars\Grammar
-	 */
-	protected function getDefaultQueryGrammar()
-	{
-		return $this->withTablePrefix(new Query\Grammars\MySqlGrammar);
-	}
+    /**
+     * Get a schema builder instance for the connection.
+     *
+     * @return \Illuminate\Database\Schema\MySqlBuilder
+     */
+    public function getSchemaBuilder()
+    {
+        if (is_null($this->schemaGrammar)) {
+            $this->useDefaultSchemaGrammar();
+        }
 
-	/**
-	 * Get the default schema grammar instance.
-	 *
-	 * @return \Illuminate\Database\Schema\Grammars\Grammar
-	 */
-	protected function getDefaultSchemaGrammar()
-	{
-		return $this->withTablePrefix(new Schema\Grammars\MySqlGrammar);
-	}
+        return new MySqlBuilder($this);
+    }
 
-	/**
-	 * Get the Doctrine DBAL Driver.
-	 *
-	 * @return \Doctrine\DBAL\Driver
-	 */
-	protected function getDoctrineDriver()
-	{
-		return new \Doctrine\DBAL\Driver\PDOMySql\Driver;
-	}
+    /**
+     * Get the default schema grammar instance.
+     *
+     * @return \Illuminate\Database\Schema\Grammars\MySqlGrammar
+     */
+    protected function getDefaultSchemaGrammar()
+    {
+        return $this->withTablePrefix(new SchemaGrammar);
+    }
 
+    /**
+     * Get the default post processor instance.
+     *
+     * @return \Illuminate\Database\Query\Processors\MySqlProcessor
+     */
+    protected function getDefaultPostProcessor()
+    {
+        return new MySqlProcessor;
+    }
+
+    /**
+     * Get the Doctrine DBAL driver.
+     *
+     * @return \Doctrine\DBAL\Driver\PDOMySql\Driver
+     */
+    protected function getDoctrineDriver()
+    {
+        return new DoctrineDriver;
+    }
 }

@@ -1,253 +1,209 @@
 <?php
 
-use Mockery as m;
+namespace Illuminate\Tests\View;
+
+use Illuminate\Filesystem\Filesystem;
 use Illuminate\View\Compilers\BladeCompiler;
+use InvalidArgumentException;
+use Mockery as m;
+use PHPUnit\Framework\TestCase;
 
-class ViewBladeCompilerTest extends PHPUnit_Framework_TestCase {
+class ViewBladeCompilerTest extends TestCase
+{
+    protected function tearDown(): void
+    {
+        m::close();
+    }
 
-	public function tearDown()
-	{
-		m::close();
-	}
+    public function testIsExpiredReturnsTrueIfCompiledFileDoesntExist()
+    {
+        $compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
+        $files->shouldReceive('exists')->once()->with(__DIR__.'/'.sha1('foo').'.php')->andReturn(false);
+        $this->assertTrue($compiler->isExpired('foo'));
+    }
 
+    public function testCannotConstructWithBadCachePath()
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Please provide a valid cache path.');
 
-	public function testIsExpiredReturnsTrueIfCompiledFileDoesntExist()
-	{
-		$compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
-		$files->shouldReceive('exists')->once()->with(__DIR__.'/'.md5('foo'))->andReturn(false);
-		$this->assertTrue($compiler->isExpired('foo'));
-	}
+        new BladeCompiler($this->getFiles(), null);
+    }
 
+    public function testIsExpiredReturnsTrueWhenModificationTimesWarrant()
+    {
+        $compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
+        $files->shouldReceive('exists')->once()->with(__DIR__.'/'.sha1('foo').'.php')->andReturn(true);
+        $files->shouldReceive('lastModified')->once()->with('foo')->andReturn(100);
+        $files->shouldReceive('lastModified')->once()->with(__DIR__.'/'.sha1('foo').'.php')->andReturn(0);
+        $this->assertTrue($compiler->isExpired('foo'));
+    }
 
-	public function testIsExpiredReturnsTrueIfCachePathIsNull()
-	{
-		$compiler = new BladeCompiler($files = $this->getFiles(), null);
-		$files->shouldReceive('exists')->never();
-		$this->assertTrue($compiler->isExpired('foo'));
-	}
+    public function testCompilePathIsProperlyCreated()
+    {
+        $compiler = new BladeCompiler($this->getFiles(), __DIR__);
+        $this->assertEquals(__DIR__.'/'.sha1('foo').'.php', $compiler->getCompiledPath('foo'));
+    }
 
+    public function testCompileCompilesFileAndReturnsContents()
+    {
+        $compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
+        $files->shouldReceive('get')->once()->with('foo')->andReturn('Hello World');
+        $files->shouldReceive('put')->once()->with(__DIR__.'/'.sha1('foo').'.php', 'Hello World<?php /**PATH foo ENDPATH**/ ?>');
+        $compiler->compile('foo');
+    }
 
-	public function testIsExpiredReturnsTrueWhenModificationTimesWarrant()
-	{
-		$compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
-		$files->shouldReceive('exists')->once()->with(__DIR__.'/'.md5('foo'))->andReturn(true);
-		$files->shouldReceive('lastModified')->once()->with('foo')->andReturn(100);
-		$files->shouldReceive('lastModified')->once()->with(__DIR__.'/'.md5('foo'))->andReturn(0);
-		$this->assertTrue($compiler->isExpired('foo'));
-	}
+    public function testCompileCompilesAndGetThePath()
+    {
+        $compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
+        $files->shouldReceive('get')->once()->with('foo')->andReturn('Hello World');
+        $files->shouldReceive('put')->once()->with(__DIR__.'/'.sha1('foo').'.php', 'Hello World<?php /**PATH foo ENDPATH**/ ?>');
+        $compiler->compile('foo');
+        $this->assertSame('foo', $compiler->getPath());
+    }
 
+    public function testCompileSetAndGetThePath()
+    {
+        $compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
+        $compiler->setPath('foo');
+        $this->assertSame('foo', $compiler->getPath());
+    }
 
-	public function testCompilePathIsProperlyCreated()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$this->assertEquals(__DIR__.'/'.md5('foo'), $compiler->getCompiledPath('foo'));
-	}
+    public function testCompileWithPathSetBefore()
+    {
+        $compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
+        $files->shouldReceive('get')->once()->with('foo')->andReturn('Hello World');
+        $files->shouldReceive('put')->once()->with(__DIR__.'/'.sha1('foo').'.php', 'Hello World<?php /**PATH foo ENDPATH**/ ?>');
+        // set path before compilation
+        $compiler->setPath('foo');
+        // trigger compilation with $path
+        $compiler->compile();
+        $this->assertSame('foo', $compiler->getPath());
+    }
 
+    public function testRawTagsCanBeSetToLegacyValues()
+    {
+        $compiler = new BladeCompiler($this->getFiles(), __DIR__);
+        $compiler->setEchoFormat('%s');
 
-	public function testCompileCompilesFileAndReturnsContents()
-	{
-		$compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
-		$files->shouldReceive('get')->once()->with('foo')->andReturn('Hello World');
-		$files->shouldReceive('put')->once()->with(__DIR__.'/'.md5('foo'), 'Hello World');
-		$compiler->compile('foo');
-	}
+        $this->assertSame('<?php echo e($name); ?>', $compiler->compileString('{{{ $name }}}'));
+        $this->assertSame('<?php echo $name; ?>', $compiler->compileString('{{ $name }}'));
+        $this->assertSame('<?php echo $name; ?>', $compiler->compileString('{{
+            $name
+        }}'));
+    }
 
+    /**
+     * @param  string  $content
+     * @param  string  $compiled
+     *
+     * @dataProvider appendViewPathDataProvider
+     */
+    public function testIncludePathToTemplate($content, $compiled)
+    {
+        $compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
+        $files->shouldReceive('get')->once()->with('foo')->andReturn($content);
+        $files->shouldReceive('put')->once()->with(__DIR__.'/'.sha1('foo').'.php', $compiled);
 
-	public function testCompileDoesntStoreFilesWhenCachePathIsNull()
-	{
-		$compiler = new BladeCompiler($files = $this->getFiles(), null);
-		$files->shouldReceive('get')->once()->with('foo')->andReturn('Hello World');
-		$files->shouldReceive('put')->never();
-		$compiler->compile('foo');
-	}
+        $compiler->compile('foo');
+    }
 
+    /**
+     * @return array
+     */
+    public function appendViewPathDataProvider()
+    {
+        return [
+            'No PHP blocks' => [
+                'Hello World',
+                'Hello World<?php /**PATH foo ENDPATH**/ ?>',
+            ],
+            'Single PHP block without closing ?>' => [
+                '<?php echo $path',
+                '<?php echo $path ?><?php /**PATH foo ENDPATH**/ ?>',
+            ],
+            'Ending PHP block.' => [
+                'Hello world<?php echo $path ?>',
+                'Hello world<?php echo $path ?><?php /**PATH foo ENDPATH**/ ?>',
+            ],
+            'Ending PHP block without closing ?>' => [
+                'Hello world<?php echo $path',
+                'Hello world<?php echo $path ?><?php /**PATH foo ENDPATH**/ ?>',
+            ],
+            'PHP block between content.' => [
+                'Hello world<?php echo $path ?>Hi There',
+                'Hello world<?php echo $path ?>Hi There<?php /**PATH foo ENDPATH**/ ?>',
+            ],
+            'Multiple PHP blocks.' => [
+                'Hello world<?php echo $path ?>Hi There<?php echo $path ?>Hello Again',
+                'Hello world<?php echo $path ?>Hi There<?php echo $path ?>Hello Again<?php /**PATH foo ENDPATH**/ ?>',
+            ],
+            'Multiple PHP blocks without closing ?>' => [
+                'Hello world<?php echo $path ?>Hi There<?php echo $path',
+                'Hello world<?php echo $path ?>Hi There<?php echo $path ?><?php /**PATH foo ENDPATH**/ ?>',
+            ],
+            'Short open echo tag' => [
+                'Hello world<?= echo $path',
+                'Hello world<?= echo $path ?><?php /**PATH foo ENDPATH**/ ?>',
+            ],
+            'Echo XML declaration' => [
+                '<?php echo \'<?xml version="1.0" encoding="UTF-8"?>\';',
+                '<?php echo \'<?xml version="1.0" encoding="UTF-8"?>\'; ?><?php /**PATH foo ENDPATH**/ ?>',
+            ],
+        ];
+    }
 
-	public function testEchosAreCompiled()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$this->assertEquals('<?php echo e($name); ?>', $compiler->compileString('{{{$name}}}'));
-		$this->assertEquals('<?php echo $name; ?>', $compiler->compileString('{{$name}}'));
-		$this->assertEquals('<?php echo $name; ?>', $compiler->compileString('{{ $name }}'));
-		$this->assertEquals('<?php echo $name; ?>', $compiler->compileString('{{ 
-			$name
-		}}'));
-	}
+    public function testDontIncludeEmptyPath()
+    {
+        $compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
+        $files->shouldReceive('get')->once()->with('')->andReturn('Hello World');
+        $files->shouldReceive('put')->once()->with(__DIR__.'/'.sha1('').'.php', 'Hello World');
+        $compiler->setPath('');
+        $compiler->compile();
+    }
 
+    public function testDontIncludeNullPath()
+    {
+        $compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
+        $files->shouldReceive('get')->once()->with(null)->andReturn('Hello World');
+        $files->shouldReceive('put')->once()->with(__DIR__.'/'.sha1(null).'.php', 'Hello World');
+        $compiler->setPath(null);
+        $compiler->compile();
+    }
 
-	public function testExtendsAreCompiled()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$string = '@extends(\'foo\')
-test';
-		$expected = "test\r\n".'<?php echo $__env->make(\'foo\', array_except(get_defined_vars(), array(\'__data\', \'__path\')))->render(); ?>';
-		$this->assertEquals($expected, $compiler->compileString($string));
+    public function testShouldStartFromStrictTypesDeclaration()
+    {
+        $compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
+        $strictTypeDecl = "<?php\ndeclare(strict_types = 1);";
+        $this->assertTrue(substr($compiler->compileString("<?php\ndeclare(strict_types = 1);\nHello World"),
+            0, strlen($strictTypeDecl)) === $strictTypeDecl);
+    }
 
+    public function testComponentAliasesCanBeConventionallyDetermined()
+    {
+        $compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
 
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$string = '@extends(name(foo))
-test';
-		$expected = "test\r\n".'<?php echo $__env->make(name(foo), array_except(get_defined_vars(), array(\'__data\', \'__path\')))->render(); ?>';
-		$this->assertEquals($expected, $compiler->compileString($string));
-	}
+        $compiler->component('App\Foo\Bar');
+        $this->assertEquals(['bar' => 'App\Foo\Bar'], $compiler->getClassComponentAliases());
 
+        $compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
 
-	public function testCommentsAreCompiled()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$string = '{{--this is a comment--}}';
-		$expected = '<?php /* this is a comment */ ?>';
-		$this->assertEquals($expected, $compiler->compileString($string));
+        $compiler->component('App\Foo\Bar', null, 'prefix');
+        $this->assertEquals(['prefix-bar' => 'App\Foo\Bar'], $compiler->getClassComponentAliases());
 
+        $compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
 
-		$string = '{{--
-this is a comment
---}}';
-		$expected = '<?php /* 
-this is a comment
- */ ?>';
-		$this->assertEquals($expected, $compiler->compileString($string));
-	}
+        $compiler->component('App\View\Components\Forms\Input');
+        $this->assertEquals(['forms:input' => 'App\View\Components\Forms\Input'], $compiler->getClassComponentAliases());
 
+        $compiler = new BladeCompiler($files = $this->getFiles(), __DIR__);
 
-	public function testIfStatementsAreCompiled()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$string = '@if (name(foo(bar)))
-breeze
-@endif';
-		$expected = '<?php if (name(foo(bar))): ?>
-breeze
-<?php endif; ?>';
-		$this->assertEquals($expected, $compiler->compileString($string));
-	}
+        $compiler->component('App\View\Components\Forms\Input', null, 'prefix');
+        $this->assertEquals(['prefix-forms:input' => 'App\View\Components\Forms\Input'], $compiler->getClassComponentAliases());
+    }
 
-
-	public function testElseStatementsAreCompiled()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$string = '@if (name(foo(bar)))
-breeze
-@else
-boom
-@endif';
-		$expected = '<?php if (name(foo(bar))): ?>
-breeze
-<?php else: ?>
-boom
-<?php endif; ?>';
-		$this->assertEquals($expected, $compiler->compileString($string));
-	}
-
-
-	public function testElseIfStatementsAreCompiled()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$string = '@if (name(foo(bar)))
-breeze
-@elseif (boom(breeze))
-boom
-@endif';
-		$expected = '<?php if (name(foo(bar))): ?>
-breeze
-<?php elseif (boom(breeze)): ?>
-boom
-<?php endif; ?>';
-		$this->assertEquals($expected, $compiler->compileString($string));
-	}
-
-
-	public function testUnlessStatementsAreCompiled()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$string = '@unless (name(foo(bar)))
-breeze
-@endunless';
-		$expected = '<?php if ( ! (name(foo(bar)))): ?>
-breeze
-<?php endif; ?>';
-		$this->assertEquals($expected, $compiler->compileString($string));
-	}
-
-
-	public function testIncludesAreCompiled()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$this->assertEquals('<?php echo $__env->make(\'foo\', array_except(get_defined_vars(), array(\'__data\', \'__path\')))->render(); ?>', $compiler->compileString('@include(\'foo\')'));
-		$this->assertEquals('<?php echo $__env->make(name(foo), array_except(get_defined_vars(), array(\'__data\', \'__path\')))->render(); ?>', $compiler->compileString('@include(name(foo))'));
-	}
-
-
-	public function testShowEachAreCompiled()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$this->assertEquals('<?php echo $__env->renderEach(\'foo\', \'bar\'); ?>', $compiler->compileString('@each(\'foo\', \'bar\')'));
-		$this->assertEquals('<?php echo $__env->renderEach(name(foo)); ?>', $compiler->compileString('@each(name(foo))'));
-	}
-
-
-	public function testYieldsAreCompiled()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$this->assertEquals('<?php echo $__env->yieldContent(\'foo\'); ?>', $compiler->compileString('@yield(\'foo\')'));
-		$this->assertEquals('<?php echo $__env->yieldContent(name(foo)); ?>', $compiler->compileString('@yield(name(foo))'));
-	}
-
-
-	public function testShowsAreCompiled()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$this->assertEquals('<?php echo $__env->yieldSection(); ?>', $compiler->compileString('@show'));
-	}
-
-
-	public function testLanguageAndChoicesAreCompiled()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$this->assertEquals('<?php echo \Illuminate\Support\Facades\Lang::get(\'foo\'); ?>', $compiler->compileString("@lang('foo')"));
-		$this->assertEquals('<?php echo \Illuminate\Support\Facades\Lang::choice(\'foo\', 1); ?>', $compiler->compileString("@choice('foo', 1)"));
-	}
-
-
-	public function testSectionStartsAreCompiled()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$this->assertEquals('<?php $__env->startSection(\'foo\'); ?>', $compiler->compileString('@section(\'foo\')'));
-		$this->assertEquals('<?php $__env->startSection(name(foo)); ?>', $compiler->compileString('@section(name(foo))'));
-	}
-
-
-	public function testStopSectionsAreCompiled()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$this->assertEquals('<?php $__env->stopSection(); ?>', $compiler->compileString('@stop'));
-	}
-
-
-	public function testCustomExtensionsAreCompiled()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$compiler->extend(function($value) { return str_replace('foo', 'bar', $value); });
-		$this->assertEquals('bar', $compiler->compileString('foo'));
-	}
-
-
-	public function testConfiguringContentTags()
-	{
-		$compiler = new BladeCompiler($this->getFiles(), __DIR__);
-		$compiler->setContentTags('[[', ']]');
-		$compiler->setEscapedContentTags('[[[', ']]]');
-
-		$this->assertEquals('<?php echo e($name); ?>', $compiler->compileString('[[[ $name ]]]'));
-		$this->assertEquals('<?php echo $name; ?>', $compiler->compileString('[[ $name ]]'));
-		$this->assertEquals('<?php echo $name; ?>', $compiler->compileString('[[
-			$name
-		]]'));
-	}
-
-
-	protected function getFiles()
-	{
-		return m::mock('Illuminate\Filesystem\Filesystem');
-	}
-
+    protected function getFiles()
+    {
+        return m::mock(Filesystem::class);
+    }
 }

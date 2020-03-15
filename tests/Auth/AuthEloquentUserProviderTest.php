@@ -1,73 +1,136 @@
 <?php
 
+namespace Illuminate\Tests\Auth;
+
+use Illuminate\Auth\EloquentUserProvider;
+use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Contracts\Hashing\Hasher;
 use Mockery as m;
+use PHPUnit\Framework\TestCase;
+use stdClass;
 
-class AuthEloquentUserProviderTest extends PHPUnit_Framework_TestCase {
+class AuthEloquentUserProviderTest extends TestCase
+{
+    protected function tearDown(): void
+    {
+        m::close();
+    }
 
-	public function tearDown()
-	{
-		m::close();
-	}
+    public function testRetrieveByIDReturnsUser()
+    {
+        $provider = $this->getProviderMock();
+        $mock = m::mock(stdClass::class);
+        $mock->shouldReceive('newQuery')->once()->andReturn($mock);
+        $mock->shouldReceive('getAuthIdentifierName')->once()->andReturn('id');
+        $mock->shouldReceive('where')->once()->with('id', 1)->andReturn($mock);
+        $mock->shouldReceive('first')->once()->andReturn('bar');
+        $provider->expects($this->once())->method('createModel')->willReturn($mock);
+        $user = $provider->retrieveById(1);
 
+        $this->assertSame('bar', $user);
+    }
 
-	public function testRetrieveByIDReturnsUser()
-	{
-		$provider = $this->getProviderMock();
-		$mock = m::mock('stdClass');
-		$mock->shouldReceive('newQuery')->once()->andReturn($mock);
-		$mock->shouldReceive('find')->once()->with(1)->andReturn('bar');
-		$provider->expects($this->once())->method('createModel')->will($this->returnValue($mock));
-		$user = $provider->retrieveByID(1);
+    public function testRetrieveByTokenReturnsUser()
+    {
+        $mockUser = m::mock(stdClass::class);
+        $mockUser->shouldReceive('getRememberToken')->once()->andReturn('a');
 
-		$this->assertEquals('bar', $user);
-	}
+        $provider = $this->getProviderMock();
+        $mock = m::mock(stdClass::class);
+        $mock->shouldReceive('newQuery')->once()->andReturn($mock);
+        $mock->shouldReceive('getAuthIdentifierName')->once()->andReturn('id');
+        $mock->shouldReceive('where')->once()->with('id', 1)->andReturn($mock);
+        $mock->shouldReceive('first')->once()->andReturn($mockUser);
+        $provider->expects($this->once())->method('createModel')->willReturn($mock);
+        $user = $provider->retrieveByToken(1, 'a');
 
+        $this->assertEquals($mockUser, $user);
+    }
 
-	public function testRetrieveByCredentialsReturnsUser()
-	{
-		$provider = $this->getProviderMock();
-		$mock = m::mock('stdClass');
-		$mock->shouldReceive('newQuery')->once()->andReturn($mock);
-		$mock->shouldReceive('where')->once()->with('username', 'dayle');
-		$mock->shouldReceive('first')->once()->andReturn('bar');
-		$provider->expects($this->once())->method('createModel')->will($this->returnValue($mock));
-		$user = $provider->retrieveByCredentials(array('username' => 'dayle', 'password' => 'foo'));
+    public function testRetrieveTokenWithBadIdentifierReturnsNull()
+    {
+        $provider = $this->getProviderMock();
+        $mock = m::mock(stdClass::class);
+        $mock->shouldReceive('newQuery')->once()->andReturn($mock);
+        $mock->shouldReceive('getAuthIdentifierName')->once()->andReturn('id');
+        $mock->shouldReceive('where')->once()->with('id', 1)->andReturn($mock);
+        $mock->shouldReceive('first')->once()->andReturn(null);
+        $provider->expects($this->once())->method('createModel')->willReturn($mock);
+        $user = $provider->retrieveByToken(1, 'a');
 
-		$this->assertEquals('bar', $user);
-	}
+        $this->assertNull($user);
+    }
 
+    public function testRetrievingWithOnlyPasswordCredentialReturnsNull()
+    {
+        $provider = $this->getProviderMock();
+        $mock = m::mock(stdClass::class);
+        $user = $provider->retrieveByCredentials(['api_password' => 'foo']);
 
-	public function testCredentialValidation()
-	{
-		$conn = m::mock('Illuminate\Database\Connection');
-		$hasher = m::mock('Illuminate\Hashing\HasherInterface');
-		$hasher->shouldReceive('check')->once()->with('plain', 'hash')->andReturn(true);
-		$provider = new Illuminate\Auth\EloquentUserProvider($hasher, 'foo');
-		$user = m::mock('Illuminate\Auth\UserInterface');
-		$user->shouldReceive('getAuthPassword')->once()->andReturn('hash');
-		$result = $provider->validateCredentials($user, array('password' => 'plain'));
+        $this->assertNull($user);
+    }
 
-		$this->assertTrue($result);
-	}
+    public function testRetrieveByBadTokenReturnsNull()
+    {
+        $mockUser = m::mock(stdClass::class);
+        $mockUser->shouldReceive('getRememberToken')->once()->andReturn(null);
 
+        $provider = $this->getProviderMock();
+        $mock = m::mock(stdClass::class);
+        $mock->shouldReceive('newQuery')->once()->andReturn($mock);
+        $mock->shouldReceive('getAuthIdentifierName')->once()->andReturn('id');
+        $mock->shouldReceive('where')->once()->with('id', 1)->andReturn($mock);
+        $mock->shouldReceive('first')->once()->andReturn($mockUser);
+        $provider->expects($this->once())->method('createModel')->willReturn($mock);
+        $user = $provider->retrieveByToken(1, 'a');
 
-	public function testModelsCanBeCreated()
-	{
-		$conn = m::mock('Illuminate\Database\Connection');
-		$hasher = m::mock('Illuminate\Hashing\HasherInterface');
-		$provider = new Illuminate\Auth\EloquentUserProvider($hasher, 'EloquentProviderUserStub');
-		$model = $provider->createModel();
+        $this->assertNull($user);
+    }
 
-		$this->assertInstanceOf('EloquentProviderUserStub', $model);
-	}
+    public function testRetrieveByCredentialsReturnsUser()
+    {
+        $provider = $this->getProviderMock();
+        $mock = m::mock(stdClass::class);
+        $mock->shouldReceive('newQuery')->once()->andReturn($mock);
+        $mock->shouldReceive('where')->once()->with('username', 'dayle');
+        $mock->shouldReceive('whereIn')->once()->with('group', ['one', 'two']);
+        $mock->shouldReceive('first')->once()->andReturn('bar');
+        $provider->expects($this->once())->method('createModel')->willReturn($mock);
+        $user = $provider->retrieveByCredentials(['username' => 'dayle', 'password' => 'foo', 'group' => ['one', 'two']]);
 
+        $this->assertSame('bar', $user);
+    }
 
-	protected function getProviderMock()
-	{
-		$hasher = m::mock('Illuminate\Hashing\HasherInterface');
-		return $this->getMock('Illuminate\Auth\EloquentUserProvider', array('createModel'), array($hasher, 'foo'));
-	}
+    public function testCredentialValidation()
+    {
+        $hasher = m::mock(Hasher::class);
+        $hasher->shouldReceive('check')->once()->with('plain', 'hash')->andReturn(true);
+        $provider = new EloquentUserProvider($hasher, 'foo');
+        $user = m::mock(Authenticatable::class);
+        $user->shouldReceive('getAuthPassword')->once()->andReturn('hash');
+        $result = $provider->validateCredentials($user, ['password' => 'plain']);
 
+        $this->assertTrue($result);
+    }
+
+    public function testModelsCanBeCreated()
+    {
+        $hasher = m::mock(Hasher::class);
+        $provider = new EloquentUserProvider($hasher, EloquentProviderUserStub::class);
+        $model = $provider->createModel();
+
+        $this->assertInstanceOf(EloquentProviderUserStub::class, $model);
+    }
+
+    protected function getProviderMock()
+    {
+        $hasher = m::mock(Hasher::class);
+
+        return $this->getMockBuilder(EloquentUserProvider::class)->setMethods(['createModel'])->setConstructorArgs([$hasher, 'foo'])->getMock();
+    }
 }
 
-class EloquentProviderUserStub {}
+class EloquentProviderUserStub
+{
+    //
+}

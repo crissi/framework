@@ -1,38 +1,48 @@
 {
     "name": "illuminate/routing",
-    "description": "A swift routing and dispatch component.",
-    "keywords": ["laravel"],
+    "description": "The Illuminate Routing package.",
+    "license": "MIT",
+    "homepage": "https://laravel.com",
+    "support": {
+        "issues": "https://github.com/laravel/framework/issues",
+        "source": "https://github.com/laravel/framework"
+    },
     "authors": [
         {
             "name": "Taylor Otwell",
-            "email": "taylorotwell@gmail.com"
+            "email": "taylor@laravel.com"
         }
     ],
     "require": {
-        "illuminate/container": "4.0.x",
-        "illuminate/http": "4.0.x",
-        "illuminate/session": "4.0.x",
-        "illuminate/support": "4.0.x",
-        "symfony/http-foundation": "2.3.*",
-        "symfony/http-kernel": "2.3.*",
-        "symfony/routing": "2.3.*"
-    },
-    "require-dev": {
-        "illuminate/console": "4.0.x",
-        "illuminate/filesystem": "4.0.x",
-        "mockery/mockery": "0.7.2",
-        "phpunit/phpunit": "3.7.*"
+        "php": "^7.3",
+        "ext-json": "*",
+        "illuminate/container": "^8.0",
+        "illuminate/contracts": "^8.0",
+        "illuminate/http": "^8.0",
+        "illuminate/pipeline": "^8.0",
+        "illuminate/session": "^8.0",
+        "illuminate/support": "^8.0",
+        "symfony/http-foundation": "^5.1",
+        "symfony/http-kernel": "^5.1",
+        "symfony/routing": "^5.1"
     },
     "autoload": {
-        "psr-0": {
-            "Illuminate\\Routing": ""
+        "psr-4": {
+            "Illuminate\\Routing\\": ""
         }
     },
-    "target-dir": "Illuminate/Routing",
     "extra": {
         "branch-alias": {
-            "dev-master": "4.0-dev"
+            "dev-master": "8.x-dev"
         }
+    },
+    "suggest": {
+        "illuminate/console": "Required to use the make commands (^8.0).",
+        "nyholm/psr7": "Required to use PSR-7 bridging features (^1.2).",
+        "symfony/psr-http-message-bridge": "Required to use PSR-7 bridging features (^2.0)."
+    },
+    "config": {
+        "sort-packages": true
     },
     "minimum-stability": "dev"
 }

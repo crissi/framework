@@ -1,74 +1,92 @@
-<?php namespace Illuminate\Cache;
+<?php
 
-class ApcWrapper {
+namespace Illuminate\Cache;
 
-	/**
-	 * Get an item from the cache.
-	 *
-	 * @param  string  $key
-	 * @return mixed
-	 */
-	public function get($key)
-	{
-		return apc_fetch($key);
-	}
+class ApcWrapper
+{
+    /**
+     * Indicates if APCu is supported.
+     *
+     * @var bool
+     */
+    protected $apcu = false;
 
-	/**
-	 * Store an item in the cache.
-	 *
-	 * @param  string  $key
-	 * @param  mixed   $value
-	 * @param  int     $seconds
-	 * @return array|bool
-	 */
-	public function put($key, $value, $seconds)
-	{
-		return apc_store($key, $value, $seconds);
-	}
+    /**
+     * Create a new APC wrapper instance.
+     *
+     * @return void
+     */
+    public function __construct()
+    {
+        $this->apcu = function_exists('apcu_fetch');
+    }
 
-	/**
-	 * Increment the value of an item in the cache.
-	 *
-	 * @param  string  $key
-	 * @param  mixed   $value
-	 * @return array|bool
-	 */
-	public function increment($key, $value)
-	{
-		return apc_inc($key, $value);
-	}
+    /**
+     * Get an item from the cache.
+     *
+     * @param  string  $key
+     * @return mixed
+     */
+    public function get($key)
+    {
+        return $this->apcu ? apcu_fetch($key) : apc_fetch($key);
+    }
 
-	/**
-	 * Decremenet the value of an item in the cache.
-	 *
-	 * @param  string  $key
-	 * @param  mixed   $value
-	 * @return array|bool
-	 */
-	public function decrement($key, $value)
-	{
-		return apc_dec($key, $value);
-	}
+    /**
+     * Store an item in the cache.
+     *
+     * @param  string  $key
+     * @param  mixed  $value
+     * @param  int  $seconds
+     * @return array|bool
+     */
+    public function put($key, $value, $seconds)
+    {
+        return $this->apcu ? apcu_store($key, $value, $seconds) : apc_store($key, $value, $seconds);
+    }
 
-	/**
-	 * Remove an item from the cache.
-	 *
-	 * @param  string  $key
-	 * @return array|bool
-	 */
-	public function delete($key)
-	{
-		return apc_delete($key);
-	}
+    /**
+     * Increment the value of an item in the cache.
+     *
+     * @param  string  $key
+     * @param  mixed  $value
+     * @return int|bool
+     */
+    public function increment($key, $value)
+    {
+        return $this->apcu ? apcu_inc($key, $value) : apc_inc($key, $value);
+    }
 
-	/**
-	 * Remove all items from the cache.
-	 *
-	 * @return void
-	 */
-	public function flush()
-	{
-		apc_clear_cache('user');
-	}
+    /**
+     * Decrement the value of an item in the cache.
+     *
+     * @param  string  $key
+     * @param  mixed  $value
+     * @return int|bool
+     */
+    public function decrement($key, $value)
+    {
+        return $this->apcu ? apcu_dec($key, $value) : apc_dec($key, $value);
+    }
 
+    /**
+     * Remove an item from the cache.
+     *
+     * @param  string  $key
+     * @return bool
+     */
+    public function delete($key)
+    {
+        return $this->apcu ? apcu_delete($key) : apc_delete($key);
+    }
+
+    /**
+     * Remove all items from the cache.
+     *
+     * @return bool
+     */
+    public function flush()
+    {
+        return $this->apcu ? apcu_clear_cache() : apc_clear_cache('user');
+    }
 }

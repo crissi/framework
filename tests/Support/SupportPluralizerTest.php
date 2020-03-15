@@ -1,32 +1,75 @@
 <?php
 
-class SupportPluralizerTest extends PHPUnit_Framework_TestCase {
+namespace Illuminate\Tests\Support;
 
-	public function testBasicUsage()
-	{
-		$this->assertEquals('children', str_plural('child'));
-		$this->assertEquals('tests', str_plural('test'));
-		$this->assertEquals('deer', str_plural('deer'));
-		$this->assertEquals('child', str_singular('children'));
-		$this->assertEquals('test', str_singular('tests'));
-		$this->assertEquals('deer', str_singular('deer'));
-	}
+use Illuminate\Support\Str;
+use PHPUnit\Framework\TestCase;
 
-	public function testCaseSensitiveUsage()
-	{
-		$this->assertEquals('Children', str_plural('Child'));
-		$this->assertEquals('CHILDREN', str_plural('CHILD'));
-		$this->assertEquals('Tests', str_plural('Test'));
-		$this->assertEquals('TESTS', str_plural('TEST'));
-		$this->assertEquals('tests', str_plural('test'));
-		$this->assertEquals('Deer', str_plural('Deer'));
-		$this->assertEquals('DEER', str_plural('DEER'));
-		$this->assertEquals('Child', str_singular('Children'));
-		$this->assertEquals('CHILD', str_singular('CHILDREN'));
-		$this->assertEquals('Test', str_singular('Tests'));
-		$this->assertEquals('TEST', str_singular('TESTS'));
-		$this->assertEquals('Deer', str_singular('Deer'));
-		$this->assertEquals('DEER', str_singular('DEER'));
-	}
+class SupportPluralizerTest extends TestCase
+{
+    public function testBasicSingular()
+    {
+        $this->assertSame('child', Str::singular('children'));
+    }
 
+    public function testBasicPlural()
+    {
+        $this->assertSame('children', Str::plural('child'));
+        $this->assertSame('cod', Str::plural('cod'));
+    }
+
+    public function testCaseSensitiveSingularUsage()
+    {
+        $this->assertSame('Child', Str::singular('Children'));
+        $this->assertSame('CHILD', Str::singular('CHILDREN'));
+        $this->assertSame('Test', Str::singular('Tests'));
+    }
+
+    public function testCaseSensitiveSingularPlural()
+    {
+        $this->assertSame('Children', Str::plural('Child'));
+        $this->assertSame('CHILDREN', Str::plural('CHILD'));
+        $this->assertSame('Tests', Str::plural('Test'));
+        $this->assertSame('children', Str::plural('cHiLd'));
+    }
+
+    public function testIfEndOfWordPlural()
+    {
+        $this->assertSame('VortexFields', Str::plural('VortexField'));
+        $this->assertSame('MatrixFields', Str::plural('MatrixField'));
+        $this->assertSame('IndexFields', Str::plural('IndexField'));
+        $this->assertSame('VertexFields', Str::plural('VertexField'));
+
+        // This is expected behavior, use "Str::pluralStudly" instead.
+        $this->assertSame('RealHumen', Str::plural('RealHuman'));
+    }
+
+    public function testPluralWithNegativeCount()
+    {
+        $this->assertSame('test', Str::plural('test', 1));
+        $this->assertSame('tests', Str::plural('test', 2));
+        $this->assertSame('test', Str::plural('test', -1));
+        $this->assertSame('tests', Str::plural('test', -2));
+    }
+
+    public function testPluralStudly()
+    {
+        $this->assertPluralStudly('RealHumans', 'RealHuman');
+        $this->assertPluralStudly('Models', 'Model');
+        $this->assertPluralStudly('VortexFields', 'VortexField');
+        $this->assertPluralStudly('MultipleWordsInOneStrings', 'MultipleWordsInOneString');
+    }
+
+    public function testPluralStudlyWithCount()
+    {
+        $this->assertPluralStudly('RealHuman', 'RealHuman', 1);
+        $this->assertPluralStudly('RealHumans', 'RealHuman', 2);
+        $this->assertPluralStudly('RealHuman', 'RealHuman', -1);
+        $this->assertPluralStudly('RealHumans', 'RealHuman', -2);
+    }
+
+    private function assertPluralStudly($expected, $value, $count = 2)
+    {
+        $this->assertSame($expected, Str::pluralStudly($value, $count));
+    }
 }

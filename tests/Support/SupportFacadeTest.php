@@ -1,73 +1,116 @@
 <?php
 
+namespace Illuminate\Tests\Support;
+
+use ArrayAccess;
+use Illuminate\Support\Facades\Facade;
 use Mockery as m;
+use Mockery\MockInterface;
+use PHPUnit\Framework\TestCase;
+use stdClass;
 
-class SupportFacadeTest extends PHPUnit_Framework_TestCase {
+class SupportFacadeTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        Facade::clearResolvedInstances();
+        FacadeStub::setFacadeApplication(null);
+    }
 
-	public function setUp()
-	{
-		Illuminate\Support\Facades\Facade::clearResolvedInstances();
-	}
+    protected function tearDown(): void
+    {
+        m::close();
+    }
 
+    public function testFacadeCallsUnderlyingApplication()
+    {
+        $app = new ApplicationStub;
+        $app->setAttributes(['foo' => $mock = m::mock(stdClass::class)]);
+        $mock->shouldReceive('bar')->once()->andReturn('baz');
+        FacadeStub::setFacadeApplication($app);
+        $this->assertSame('baz', FacadeStub::bar());
+    }
 
-	public function tearDown()
-	{
-		m::close();
-	}
+    public function testShouldReceiveReturnsAMockeryMock()
+    {
+        $app = new ApplicationStub;
+        $app->setAttributes(['foo' => new stdClass]);
+        FacadeStub::setFacadeApplication($app);
 
+        $this->assertInstanceOf(MockInterface::class, $mock = FacadeStub::shouldReceive('foo')->once()->with('bar')->andReturn('baz')->getMock());
+        $this->assertSame('baz', $app['foo']->foo('bar'));
+    }
 
-	public function testFacadeCallsUnderlyingApplication()
-	{
-		$app = new ApplicationStub;
-		$app->setAttributes(array('foo' => $mock = m::mock('StdClass')));
-		$mock->shouldReceive('bar')->once()->andReturn('baz');
-		FacadeStub::setFacadeApplication($app);
-		$this->assertEquals('baz', FacadeStub::bar());
-	}
+    public function testSpyReturnsAMockerySpy()
+    {
+        $app = new ApplicationStub;
+        $app->setAttributes(['foo' => new stdClass]);
+        FacadeStub::setFacadeApplication($app);
 
+        $this->assertInstanceOf(MockInterface::class, $spy = FacadeStub::spy());
 
-	public function testShouldReceiveReturnsAMockeryMock()
-	{
-		$app = new ApplicationStub;
-		$app->setAttributes(array('foo' => new StdClass));
-		FacadeStub::setFacadeApplication($app);
+        FacadeStub::foo();
+        $spy->shouldHaveReceived('foo');
+    }
 
-		$this->assertInstanceOf('Mockery\MockInterface', $mock = FacadeStub::shouldReceive('foo')->once()->with('bar')->andReturn('baz')->getMock());
-		$this->assertEquals('baz', $app['foo']->foo('bar'));
-	}
+    public function testShouldReceiveCanBeCalledTwice()
+    {
+        $app = new ApplicationStub;
+        $app->setAttributes(['foo' => new stdClass]);
+        FacadeStub::setFacadeApplication($app);
 
-	public function testShouldReceiveCanBeCalledTwice()
-	{
-		$app = new ApplicationStub;
-		$app->setAttributes(array('foo' => new StdClass));
-		FacadeStub::setFacadeApplication($app);
+        $this->assertInstanceOf(MockInterface::class, $mock = FacadeStub::shouldReceive('foo')->once()->with('bar')->andReturn('baz')->getMock());
+        $this->assertInstanceOf(MockInterface::class, $mock = FacadeStub::shouldReceive('foo2')->once()->with('bar2')->andReturn('baz2')->getMock());
+        $this->assertSame('baz', $app['foo']->foo('bar'));
+        $this->assertSame('baz2', $app['foo']->foo2('bar2'));
+    }
 
-		$this->assertInstanceOf('Mockery\MockInterface', $mock = FacadeStub::shouldReceive('foo')->once()->with('bar')->andReturn('baz')->getMock());
-		$this->assertInstanceOf('Mockery\MockInterface', $mock = FacadeStub::shouldReceive('foo2')->once()->with('bar2')->andReturn('baz2')->getMock());
-		$this->assertEquals('baz', $app['foo']->foo('bar'));
-		$this->assertEquals('baz2', $app['foo']->foo2('bar2'));
-	}
-
+    public function testCanBeMockedWithoutUnderlyingInstance()
+    {
+        FacadeStub::shouldReceive('foo')->once()->andReturn('bar');
+        $this->assertSame('bar', FacadeStub::foo());
+    }
 }
 
-class FacadeStub extends Illuminate\Support\Facades\Facade {
-
-	protected static function getFacadeAccessor()
-	{
-		return 'foo';
-	}
-
+class FacadeStub extends Facade
+{
+    protected static function getFacadeAccessor()
+    {
+        return 'foo';
+    }
 }
 
-class ApplicationStub implements ArrayAccess {
+class ApplicationStub implements ArrayAccess
+{
+    protected $attributes = [];
 
-	protected $attributes = array();
+    public function setAttributes($attributes)
+    {
+        $this->attributes = $attributes;
+    }
 
-	public function setAttributes($attributes) { $this->attributes = $attributes; }
-	public function instance($key, $instance) { $this->attributes[$key] = $instance; }
-	public function offsetExists($offset) { return isset($this->attributes[$offset]); }
-	public function offsetGet($key) { return $this->attributes[$key]; }
-	public function offsetSet($key, $value) { $this->attributes[$key] = $value; }
-	public function offsetUnset($key) { unset($this->attributes[$key]); }
+    public function instance($key, $instance)
+    {
+        $this->attributes[$key] = $instance;
+    }
 
+    public function offsetExists($offset)
+    {
+        return isset($this->attributes[$offset]);
+    }
+
+    public function offsetGet($key)
+    {
+        return $this->attributes[$key];
+    }
+
+    public function offsetSet($key, $value)
+    {
+        $this->attributes[$key] = $value;
+    }
+
+    public function offsetUnset($key)
+    {
+        unset($this->attributes[$key]);
+    }
 }

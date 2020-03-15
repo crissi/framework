@@ -1,346 +1,241 @@
-<?php namespace Illuminate\Foundation\Testing;
+<?php
 
-use Illuminate\View\View;
-use Illuminate\Auth\UserInterface;
+namespace Illuminate\Foundation\Testing;
 
-class TestCase extends \PHPUnit_Framework_TestCase {
+use Carbon\Carbon;
+use Carbon\CarbonImmutable;
+use Illuminate\Console\Application as Artisan;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Facade;
+use Illuminate\Support\Str;
+use Mockery;
+use Mockery\Exception\InvalidCountException;
+use PHPUnit\Framework\TestCase as BaseTestCase;
+use Throwable;
 
-	/**
-	 * The Illuminate application instance.
-	 *
-	 * @var \Illuminate\Foundation\Application
-	 */
-	protected $app;
+abstract class TestCase extends BaseTestCase
+{
+    use Concerns\InteractsWithContainer,
+        Concerns\MakesHttpRequests,
+        Concerns\InteractsWithAuthentication,
+        Concerns\InteractsWithConsole,
+        Concerns\InteractsWithDatabase,
+        Concerns\InteractsWithExceptionHandling,
+        Concerns\InteractsWithSession,
+        Concerns\MocksApplicationServices;
 
-	/**
-	 * The HttpKernel client instance.
-	 *
-	 * @var \Illuminate\Foundation\Testing\Client
-	 */
-	protected $client;
+    /**
+     * The Illuminate application instance.
+     *
+     * @var \Illuminate\Contracts\Foundation\Application
+     */
+    protected $app;
 
-	/**
-	 * Setup the test environment.
-	 *
-	 * @return void
-	 */
-	public function setUp()
-	{
-		$this->refreshApplication();
-	}
+    /**
+     * The callbacks that should be run after the application is created.
+     *
+     * @var array
+     */
+    protected $afterApplicationCreatedCallbacks = [];
 
-	/**
-	 * Refresh the application instance.
-	 *
-	 * @return void
-	 */
-	protected function refreshApplication()
-	{
-		$this->app = $this->createApplication();
+    /**
+     * The callbacks that should be run before the application is destroyed.
+     *
+     * @var array
+     */
+    protected $beforeApplicationDestroyedCallbacks = [];
 
-		$this->client = $this->createClient();
-	}
+    /**
+     * The exception thrown while running an application destruction callback.
+     *
+     * @var \Throwable
+     */
+    protected $callbackException;
 
-	/**
-	 * Call the given URI and return the Response.
-	 *
-	 * @param  string  $method
-	 * @param  string  $uri
-	 * @param  array   $parameters
-	 * @param  array   $files
-	 * @param  array   $server
-	 * @param  string  $content
-	 * @param  bool    $changeHistory
-	 * @return \Illuminate\Http\Response
-	 */
-	public function call()
-	{
-		call_user_func_array(array($this->client, 'request'), func_get_args());
+    /**
+     * Indicates if we have made it through the base setUp function.
+     *
+     * @var bool
+     */
+    protected $setUpHasRun = false;
 
-		return $this->client->getResponse();
-	}
+    /**
+     * Creates the application.
+     *
+     * Needs to be implemented by subclasses.
+     *
+     * @return \Symfony\Component\HttpKernel\HttpKernelInterface
+     */
+    abstract public function createApplication();
 
-	/**
-	 * Call the given HTTPS URI and return the Response.
-	 *
-	 * @param  string  $method
-	 * @param  string  $uri
-	 * @param  array   $parameters
-	 * @param  array   $files
-	 * @param  array   $server
-	 * @param  string  $content
-	 * @param  bool    $changeHistory
-	 * @return \Illuminate\Http\Response
-	 */
-	public function callSecure()
-	{
-		$parameters = func_get_args();
+    /**
+     * Setup the test environment.
+     *
+     * @return void
+     */
+    protected function setUp(): void
+    {
+        if (! $this->app) {
+            $this->refreshApplication();
+        }
 
-		$parameters[1] = 'https://localhost/'.ltrim($parameters[1], '/');
+        $this->setUpTraits();
 
-		return call_user_func_array(array($this, 'call'), $parameters);
-	}
+        foreach ($this->afterApplicationCreatedCallbacks as $callback) {
+            $callback();
+        }
 
-	/**
-	 * Call a controller action and return the Response.
-	 *
-	 * @param  string  $method
-	 * @param  string  $action
-	 * @param  array   $wildcards
-	 * @param  array   $parameters
-	 * @param  array   $files
-	 * @param  array   $server
-	 * @param  string  $content
-	 * @param  bool    $changeHistory
-	 * @return \Illuminate\Http\Response
-	 */
-	public function action($method, $action, $wildcards = array(), $parameters = array(), $files = array(), $server = array(), $content = null, $changeHistory = true)
-	{
-		$uri = $this->app['url']->action($action, $wildcards, true);
+        Facade::clearResolvedInstances();
 
-		return $this->call($method, $uri, $parameters, $files, $server, $content, $changeHistory);
-	}
+        Model::setEventDispatcher($this->app['events']);
 
-	/**
-	 * Call a named route and return the Response.
-	 *
-	 * @param  string  $method
-	 * @param  string  $name
-	 * @param  array   $routeParameters
-	 * @param  array   $parameters
-	 * @param  array   $files
-	 * @param  array   $server
-	 * @param  string  $content
-	 * @param  bool    $changeHistory
-	 * @return \Illuminate\Http\Response
-	 */
-	public function route($method, $name, $routeParameters = array(), $parameters = array(), $files = array(), $server = array(), $content = null, $changeHistory = true)
-	{
-		$uri = $this->app['url']->route($name, $routeParameters, true);
+        $this->setUpHasRun = true;
+    }
 
-		return $this->call($method, $uri, $parameters, $files, $server, $content, $changeHistory);
-	}
+    /**
+     * Refresh the application instance.
+     *
+     * @return void
+     */
+    protected function refreshApplication()
+    {
+        $this->app = $this->createApplication();
+    }
 
-	/**
-	 * Assert that the client response has an OK status code.
-	 *
-	 * @return void
-	 */
-	public function assertResponseOk()
-	{
-		$response = $this->client->getResponse();
+    /**
+     * Boot the testing helper traits.
+     *
+     * @return array
+     */
+    protected function setUpTraits()
+    {
+        $uses = array_flip(class_uses_recursive(static::class));
 
-		$actual = $response->getStatusCode();
+        if (isset($uses[RefreshDatabase::class])) {
+            $this->refreshDatabase();
+        }
 
-		return $this->assertTrue($response->isOk(), 'Expected status code 200, got ' .$actual);
-	}
+        if (isset($uses[DatabaseMigrations::class])) {
+            $this->runDatabaseMigrations();
+        }
 
-	/**
-	 * Assert that the client response has a given code.
-	 *
-	 * @param  int  $code
-	 * @return void
-	 */
-	public function assertResponseStatus($code)
-	{
-		return $this->assertEquals($code, $this->client->getResponse()->getStatusCode());
-	}
+        if (isset($uses[DatabaseTransactions::class])) {
+            $this->beginDatabaseTransaction();
+        }
 
-	/**
-	 * Assert that the response view has a given piece of bound data.
-	 *
-	 * @param  string|array  $key
-	 * @param  mixed  $value
-	 * @return void
-	 */
-	public function assertViewHas($key, $value = null)
-	{
-		if (is_array($key)) return $this->assertViewHasAll($key);
+        if (isset($uses[WithoutMiddleware::class])) {
+            $this->disableMiddlewareForAllTests();
+        }
 
-		$response = $this->client->getResponse()->original;
+        if (isset($uses[WithoutEvents::class])) {
+            $this->disableEventsForAllTests();
+        }
 
-		if ( ! $response instanceof View)
-		{
-			return $this->assertTrue(false, 'The response was not a view.');
-		}
+        if (isset($uses[WithFaker::class])) {
+            $this->setUpFaker();
+        }
 
-		if (is_null($value))
-		{
-			$this->assertArrayHasKey($key, $response->getData());
-		}
-		else
-		{
-			$this->assertEquals($value, $response->$key);
-		}
-	}
+        return $uses;
+    }
 
-	/**
-	 * Assert that the view has a given list of bound data.
-	 *
-	 * @param  array  $bindings
-	 * @return void
-	 */
-	public function assertViewHasAll(array $bindings)
-	{
-		foreach ($bindings as $key => $value)
-		{
-			if (is_int($key))
-			{
-				$this->assertViewHas($value);
-			}
-			else
-			{
-				$this->assertViewHas($key, $value);
-			}
-		}
-	}
+    /**
+     * Clean up the testing environment before the next test.
+     *
+     * @return void
+     */
+    protected function tearDown(): void
+    {
+        if ($this->app) {
+            $this->callBeforeApplicationDestroyedCallbacks();
 
-	/**
-	 * Assert whether the client was redirected to a given URI.
-	 *
-	 * @param  string  $uri
-	 * @param  array   $with
-	 * @return void
-	 */
-	public function assertRedirectedTo($uri, $with = array())
-	{
-		$response = $this->client->getResponse();
+            $this->app->flush();
 
-		$this->assertInstanceOf('Illuminate\Http\RedirectResponse', $response);
+            $this->app = null;
+        }
 
-		$this->assertEquals($this->app['url']->to($uri), $response->headers->get('Location'));
+        $this->setUpHasRun = false;
 
-		$this->assertSessionHasAll($with);
-	}
+        if (property_exists($this, 'serverVariables')) {
+            $this->serverVariables = [];
+        }
 
-	/**
-	 * Assert whether the client was redirected to a given route.
-	 *
-	 * @param  string  $name
-	 * @param  array   $parameters
-	 * @param  array   $with
-	 * @return void
-	 */
-	public function assertRedirectedToRoute($name, $parameters = array(), $with = array())
-	{
-		$this->assertRedirectedTo($this->app['url']->route($name, $parameters), $with);
-	}
+        if (property_exists($this, 'defaultHeaders')) {
+            $this->defaultHeaders = [];
+        }
 
-	/**
-	 * Assert whether the client was redirected to a given action.
-	 *
-	 * @param  string  $name
-	 * @param  array   $parameters
-	 * @param  array   $with
-	 * @return void
-	 */
-	public function assertRedirectedToAction($name, $parameters = array(), $with = array())
-	{
-		$this->assertRedirectedTo($this->app['url']->action($name, $parameters), $with);
-	}
+        if (class_exists('Mockery')) {
+            if ($container = Mockery::getContainer()) {
+                $this->addToAssertionCount($container->mockery_getExpectationCount());
+            }
 
-	/**
-	 * Assert that the session has a given list of values.
-	 *
-	 * @param  string|array  $key
-	 * @param  mixed  $value
-	 * @return void
-	 */
-	public function assertSessionHas($key, $value = null)
-	{
-		if (is_array($key)) return $this->assertSessionHasAll($key);
+            try {
+                Mockery::close();
+            } catch (InvalidCountException $e) {
+                if (! Str::contains($e->getMethodName(), ['doWrite', 'askQuestion'])) {
+                    throw $e;
+                }
+            }
+        }
 
-		if (is_null($value))
-		{
-			$this->assertTrue($this->app['session']->has($key));
-		}
-		else
-		{
-			$this->assertEquals($value, $this->app['session']->get($key));
-		}
-	}
+        if (class_exists(Carbon::class)) {
+            Carbon::setTestNow();
+        }
 
-	/**
-	 * Assert that the session has a given list of values.
-	 *
-	 * @param  array  $bindings
-	 * @return void
-	 */
-	public function assertSessionHasAll(array $bindings)
-	{
-		foreach ($bindings as $key => $value)
-		{
-			if (is_int($key))
-			{
-				$this->assertSessionHas($value);
-			}
-			else
-			{
-				$this->assertSessionHas($key, $value);
-			}
-		}
-	}
+        if (class_exists(CarbonImmutable::class)) {
+            CarbonImmutable::setTestNow();
+        }
 
-	/**
-	 * Assert that the session has errors bound.
-	 * 
-	 * @param  string|array  $bindings
-	 * @param  mixed  $format
-	 * @return void
-	 */
-	public function assertSessionHasErrors($bindings = array(), $format = null)
-	{
-		$this->assertSessionHas('errors');
+        $this->afterApplicationCreatedCallbacks = [];
+        $this->beforeApplicationDestroyedCallbacks = [];
 
-		$bindings = (array)$bindings;
+        Artisan::forgetBootstrappers();
 
-		$errors = $this->app['session']->get('errors');
+        if ($this->callbackException) {
+            throw $this->callbackException;
+        }
+    }
 
-		foreach ($bindings as $key => $value)
-		{
-			if (is_int($key))
-			{
-				$this->assertTrue($errors->has($value));
-			}
-			else
-			{
-				$this->assertContains($value, $errors->get($key, $format));
-			}
-		}
-	}
+    /**
+     * Register a callback to be run after the application is created.
+     *
+     * @param  callable  $callback
+     * @return void
+     */
+    public function afterApplicationCreated(callable $callback)
+    {
+        $this->afterApplicationCreatedCallbacks[] = $callback;
 
-	/**
-	 * Set the currently logged in user for the application.
-	 *
-	 * @param  \Illuminate\Auth\UserInterface  $user
-	 * @param  string  $driver
-	 * @return void
-	 */
-	public function be(UserInterface $user, $driver = null)
-	{
-		$this->app['auth']->driver($driver)->setUser($user);
-	}
+        if ($this->setUpHasRun) {
+            $callback();
+        }
+    }
 
-	/**
-	 * Seed a given database connection.
-	 *
-	 * @param  string  $class
-	 * @return void
-	 */
-	public function seed($class = 'DatabaseSeeder')
-	{
-		$this->app[$class]->run();
-	}
+    /**
+     * Register a callback to be run before the application is destroyed.
+     *
+     * @param  callable  $callback
+     * @return void
+     */
+    protected function beforeApplicationDestroyed(callable $callback)
+    {
+        $this->beforeApplicationDestroyedCallbacks[] = $callback;
+    }
 
-	/**
-	 * Create a new HttpKernel client instance.
-	 *
-	 * @param  array  $server
-	 * @return \Symfony\Component\HttpKernel\Client
-	 */
-	protected function createClient(array $server = array())
-	{
-		return new Client($this->app, $server);
-	}
-
+    /**
+     * Execute the application's pre-destruction callbacks.
+     *
+     * @return void
+     */
+    protected function callBeforeApplicationDestroyedCallbacks()
+    {
+        foreach ($this->beforeApplicationDestroyedCallbacks as $callback) {
+            try {
+                $callback();
+            } catch (Throwable $e) {
+                if (! $this->callbackException) {
+                    $this->callbackException = $e;
+                }
+            }
+        }
+    }
 }

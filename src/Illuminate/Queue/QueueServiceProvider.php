@@ -1,222 +1,278 @@
-<?php namespace Illuminate\Queue;
+<?php
 
-use Illuminate\Support\ServiceProvider;
-use Illuminate\Queue\Console\WorkCommand;
-use Illuminate\Queue\Console\ListenCommand;
-use Illuminate\Queue\Console\SubscribeCommand;
+namespace Illuminate\Queue;
+
+use Aws\DynamoDb\DynamoDbClient;
+use Illuminate\Contracts\Debug\ExceptionHandler;
+use Illuminate\Contracts\Support\DeferrableProvider;
+use Illuminate\Queue\Connectors\BeanstalkdConnector;
+use Illuminate\Queue\Connectors\DatabaseConnector;
+use Illuminate\Queue\Connectors\NullConnector;
+use Illuminate\Queue\Connectors\RedisConnector;
 use Illuminate\Queue\Connectors\SqsConnector;
 use Illuminate\Queue\Connectors\SyncConnector;
-use Illuminate\Queue\Connectors\IronConnector;
-use Illuminate\Queue\Connectors\BeanstalkdConnector;
+use Illuminate\Queue\Failed\DatabaseFailedJobProvider;
+use Illuminate\Queue\Failed\DynamoDbFailedJobProvider;
+use Illuminate\Queue\Failed\NullFailedJobProvider;
+use Illuminate\Support\Arr;
+use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Str;
+use Opis\Closure\SerializableClosure;
 
-class QueueServiceProvider extends ServiceProvider {
+class QueueServiceProvider extends ServiceProvider implements DeferrableProvider
+{
+    /**
+     * Register the service provider.
+     *
+     * @return void
+     */
+    public function register()
+    {
+        $this->registerManager();
+        $this->registerConnection();
+        $this->registerWorker();
+        $this->registerListener();
+        $this->registerFailedJobServices();
+        $this->registerOpisSecurityKey();
+    }
 
-	/**
-	 * Indicates if loading of the provider is deferred.
-	 *
-	 * @var bool
-	 */
-	protected $defer = true;
+    /**
+     * Register the queue manager.
+     *
+     * @return void
+     */
+    protected function registerManager()
+    {
+        $this->app->singleton('queue', function ($app) {
+            // Once we have an instance of the queue manager, we will register the various
+            // resolvers for the queue connectors. These connectors are responsible for
+            // creating the classes that accept queue configs and instantiate queues.
+            return tap(new QueueManager($app), function ($manager) {
+                $this->registerConnectors($manager);
+            });
+        });
+    }
 
-	/**
-	 * Register the service provider.
-	 *
-	 * @return void
-	 */
-	public function register()
-	{
-		$this->registerManager();
+    /**
+     * Register the default queue connection binding.
+     *
+     * @return void
+     */
+    protected function registerConnection()
+    {
+        $this->app->singleton('queue.connection', function ($app) {
+            return $app['queue']->connection();
+        });
+    }
 
-		$this->registerWorker();
+    /**
+     * Register the connectors on the queue manager.
+     *
+     * @param  \Illuminate\Queue\QueueManager  $manager
+     * @return void
+     */
+    public function registerConnectors($manager)
+    {
+        foreach (['Null', 'Sync', 'Database', 'Redis', 'Beanstalkd', 'Sqs'] as $connector) {
+            $this->{"register{$connector}Connector"}($manager);
+        }
+    }
 
-		$this->registerListener();
+    /**
+     * Register the Null queue connector.
+     *
+     * @param  \Illuminate\Queue\QueueManager  $manager
+     * @return void
+     */
+    protected function registerNullConnector($manager)
+    {
+        $manager->addConnector('null', function () {
+            return new NullConnector;
+        });
+    }
 
-		$this->registerSubscriber();
-	}
+    /**
+     * Register the Sync queue connector.
+     *
+     * @param  \Illuminate\Queue\QueueManager  $manager
+     * @return void
+     */
+    protected function registerSyncConnector($manager)
+    {
+        $manager->addConnector('sync', function () {
+            return new SyncConnector;
+        });
+    }
 
-	/**
-	 * Register the queue manager.
-	 *
-	 * @return void
-	 */
-	protected function registerManager()
-	{
-		$me = $this;
+    /**
+     * Register the database queue connector.
+     *
+     * @param  \Illuminate\Queue\QueueManager  $manager
+     * @return void
+     */
+    protected function registerDatabaseConnector($manager)
+    {
+        $manager->addConnector('database', function () {
+            return new DatabaseConnector($this->app['db']);
+        });
+    }
 
-		$this->app['queue'] = $this->app->share(function($app) use ($me)
-		{
-			// Once we have an instance of the queue manager, we will register the various
-			// resolvers for the queue connectors. These connectors are responsible for
-			// creating the classes that accept queue configs and instantiate queues.
-			$manager = new QueueManager($app);
+    /**
+     * Register the Redis queue connector.
+     *
+     * @param  \Illuminate\Queue\QueueManager  $manager
+     * @return void
+     */
+    protected function registerRedisConnector($manager)
+    {
+        $manager->addConnector('redis', function () {
+            return new RedisConnector($this->app['redis']);
+        });
+    }
 
-			$me->registerConnectors($manager);
+    /**
+     * Register the Beanstalkd queue connector.
+     *
+     * @param  \Illuminate\Queue\QueueManager  $manager
+     * @return void
+     */
+    protected function registerBeanstalkdConnector($manager)
+    {
+        $manager->addConnector('beanstalkd', function () {
+            return new BeanstalkdConnector;
+        });
+    }
 
-			return $manager;
-		});
-	}
+    /**
+     * Register the Amazon SQS queue connector.
+     *
+     * @param  \Illuminate\Queue\QueueManager  $manager
+     * @return void
+     */
+    protected function registerSqsConnector($manager)
+    {
+        $manager->addConnector('sqs', function () {
+            return new SqsConnector;
+        });
+    }
 
-	/**
-	 * Register the queue worker.
-	 *
-	 * @return void
-	 */
-	protected function registerWorker()
-	{
-		$this->registerWorkCommand();
+    /**
+     * Register the queue worker.
+     *
+     * @return void
+     */
+    protected function registerWorker()
+    {
+        $this->app->singleton('queue.worker', function ($app) {
+            $isDownForMaintenance = function () {
+                return $this->app->isDownForMaintenance();
+            };
 
-		$this->app['queue.worker'] = $this->app->share(function($app)
-		{
-			return new Worker($app['queue']);
-		});
-	}
+            return new Worker(
+                $app['queue'],
+                $app['events'],
+                $app[ExceptionHandler::class],
+                $isDownForMaintenance
+            );
+        });
+    }
 
-	/**
-	 * Register the queue worker console command.
-	 *
-	 * @return void
-	 */
-	protected function registerWorkCommand()
-	{
-		$app = $this->app;
+    /**
+     * Register the queue listener.
+     *
+     * @return void
+     */
+    protected function registerListener()
+    {
+        $this->app->singleton('queue.listener', function ($app) {
+            return new Listener($app->basePath());
+        });
+    }
 
-		$app['command.queue.work'] = $app->share(function($app)
-		{
-			return new WorkCommand($app['queue.worker']);
-		});
+    /**
+     * Register the failed job services.
+     *
+     * @return void
+     */
+    protected function registerFailedJobServices()
+    {
+        $this->app->singleton('queue.failer', function ($app) {
+            $config = $app['config']['queue.failed'];
 
-		$this->commands('command.queue.work');
-	}
+            if (isset($config['driver']) && $config['driver'] === 'dynamodb') {
+                return $this->dynamoFailedJobProvider($config);
+            } elseif (isset($config['table'])) {
+                return $this->databaseFailedJobProvider($config);
+            } else {
+                return new NullFailedJobProvider;
+            }
+        });
+    }
 
-	/**
-	 * Register the queue listener.
-	 *
-	 * @return void
-	 */
-	protected function registerListener()
-	{
-		$this->registerListenCommand();
+    /**
+     * Create a new database failed job provider.
+     *
+     * @param  array  $config
+     * @return \Illuminate\Queue\Failed\DatabaseFailedJobProvider
+     */
+    protected function databaseFailedJobProvider($config)
+    {
+        return new DatabaseFailedJobProvider(
+            $this->app['db'], $config['database'], $config['table']
+        );
+    }
 
-		$this->app['queue.listener'] = $this->app->share(function($app)
-		{
-			return new Listener($app['path.base']);
-		});
-	}
+    /**
+     * Create a new DynamoDb failed job provider.
+     *
+     * @param  array  $config
+     * @return \Illuminate\Queue\Failed\DynamoDbFailedJobProvider
+     */
+    protected function dynamoFailedJobProvider($config)
+    {
+        $dynamoConfig = [
+            'region' => $config['region'],
+            'version' => 'latest',
+            'endpoint' => $config['endpoint'] ?? null,
+        ];
 
-	/**
-	 * Register the queue listener console command.
-	 *
-	 * @return void
-	 */
-	protected function registerListenCommand()
-	{
-		$app = $this->app;
+        if (! empty($config['key']) && ! empty($config['secret'])) {
+            $dynamoConfig['credentials'] = Arr::only(
+                $config, ['key', 'secret', 'token']
+            );
+        }
 
-		$app['command.queue.listen'] = $app->share(function($app)
-		{
-			return new ListenCommand($app['queue.listener']);
-		});
+        return new DynamoDbFailedJobProvider(
+            new DynamoDbClient($dynamoConfig),
+            $this->app['config']['app.name'],
+            $config['table']
+        );
+    }
 
-		$this->commands('command.queue.listen');
-	}
+    /**
+     * Configure Opis Closure signing for security.
+     *
+     * @return void
+     */
+    protected function registerOpisSecurityKey()
+    {
+        if (Str::startsWith($key = $this->app['config']->get('app.key'), 'base64:')) {
+            $key = base64_decode(substr($key, 7));
+        }
 
-	/**
-	 * Register the push queue subscribe command.
-	 *
-	 * @return void
-	 */
-	protected function registerSubscriber()
-	{
-		$app = $this->app;
+        SerializableClosure::setSecretKey($key);
+    }
 
-		$app['command.queue.subscribe'] = $app->share(function($app)
-		{
-			return new SubscribeCommand;
-		});
-
-		$this->commands('command.queue.subscribe');
-	}
-
-	/**
-	 * Register the connectors on the queue manager.
-	 *
-	 * @param  \Illuminate\Queue\QueueManager  $manager
-	 * @return void
-	 */
-	public function registerConnectors($manager)
-	{
-		foreach (array('Sync', 'Beanstalkd', 'Sqs', 'Iron') as $connector)
-		{
-			$this->{"register{$connector}Connector"}($manager);
-		}
-	}
-
-	/**
-	 * Register the Sync queue connector.
-	 *
-	 * @param  \Illuminate\Queue\QueueManager  $manager
-	 * @return void
-	 */
-	protected function registerSyncConnector($manager)
-	{
-		$manager->addConnector('sync', function()
-		{
-			return new SyncConnector;
-		});
-	}
-
-	/**
-	 * Register the Beanstalkd queue connector.
-	 *
-	 * @param  \Illuminate\Queue\QueueManager  $manager
-	 * @return void
-	 */
-	protected function registerBeanstalkdConnector($manager)
-	{
-		$manager->addConnector('beanstalkd', function()
-		{
-			return new BeanstalkdConnector;
-		});
-	}
-
-	/**
-	 * Register the Amazon SQS queue connector.
-	 *
-	 * @param  \Illuminate\Queue\QueueManager  $manager
-	 * @return void
-	 */
-	protected function registerSqsConnector($manager)
-	{
-		$manager->addConnector('sqs', function()
-		{
-			return new SqsConnector;
-		});
-	}
-
-	/**
-	 * Register the IronMQ queue connector.
-	 *
-	 * @param  \Illuminate\Queue\QueueManager  $manager
-	 * @return void
-	 */
-	protected function registerIronConnector($manager)
-	{
-		$app = $this->app;
-
-		$manager->addConnector('iron', function() use ($app)
-		{
-			return new IronConnector($app['request']);
-		});
-	}
-
-	/**
-	 * Get the services provided by the provider.
-	 *
-	 * @return array
-	 */
-	public function provides()
-	{
-		return array('queue', 'queue.worker', 'queue.listener', 'command.queue.work', 'command.queue.listen', 'command.queue.subscribe');
-	}
-
+    /**
+     * Get the services provided by the provider.
+     *
+     * @return array
+     */
+    public function provides()
+    {
+        return [
+            'queue', 'queue.worker', 'queue.listener',
+            'queue.failer', 'queue.connection',
+        ];
+    }
 }
